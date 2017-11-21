@@ -25,8 +25,7 @@ func loadImage(path string) (img image.Image, err error) {
 }
 
 func loadCover(author, name string) (img image.Image, err error) {
-	// file := "/covers/" + author + "/" + name + "/cover.jpg"
-	file := "/Users/xieshuzhou/tmp/" + author + "/" + name + "/cover.jpg"
+	file := "/covers/" + author + "/" + name + "/cover.jpg"
 	return loadImage(file)
 }
 
