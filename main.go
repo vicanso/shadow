@@ -24,8 +24,27 @@ func loadImage(path string) (img image.Image, err error) {
 	return jpeg.Decode(file)
 }
 
+func loadCover(author, name string) (img image.Image, err error) {
+	// file := "/covers/" + author + "/" + name + "/cover.jpg"
+	file := "/Users/xieshuzhou/tmp/" + author + "/" + name + "/cover.jpg"
+	return loadImage(file)
+}
+
+// 图片转换为[]bytes
+func jpegToBytes(img image.Image) []byte {
+	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
+
+	jpeg.Encode(buf, img, nil) //写入buffer
+	return buf.Bytes()
+}
+
+// 图片转换为base64
+func jpegToBase64(img image.Image) string {
+	return base64.StdEncoding.EncodeToString(jpegToBytes(img))
+}
+
 // 对图片进行缩小处理
-func scaleImageToBase64(img image.Image, width int, height int, times int) string {
+func scaleImage(img image.Image, width int, height int, times int) image.Image {
 	bound := img.Bounds()
 	dx := bound.Dx()
 	// 先做缩小
@@ -55,12 +74,7 @@ func scaleImageToBase64(img image.Image, width int, height int, times int) strin
 			rgba.Set(x, y, pixel)
 		}
 	}
-
-	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
-
-	jpeg.Encode(buf, rgba, nil) //写入buffer
-
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
+	return rgba
 }
 
 func pingServe(w http.ResponseWriter, req *http.Request) {
@@ -76,7 +90,7 @@ func getQuery(query map[string][]string, key string) string {
 }
 
 // 根据封面生成
-func shadowCaptchaServe(w http.ResponseWriter, req *http.Request) {
+func shadowServe(w http.ResponseWriter, req *http.Request) {
 	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -93,8 +107,7 @@ func shadowCaptchaServe(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	file := "/covers/" + author + "/" + name + "/cover.jpg"
-	img, err := loadImage(file)
+	img, err := loadCover(author, name)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"message": "load image data faial"}`))
@@ -123,14 +136,66 @@ func shadowCaptchaServe(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	base64 := scaleImageToBase64(img, scaleWidth, scaleHeight, scaleTimes)
-	resStr := strings.Replace(`{"base64":"${1}", "type": "jpeg"}`, "${1}", base64, 1)
+	thumbnail := scaleImage(img, scaleWidth, scaleHeight, scaleTimes)
+
+	if getQuery(query, "type") == "image" {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(jpegToBytes(thumbnail))
+		return
+	}
+
+	base64Data := jpegToBase64(thumbnail)
+	resStr := strings.Replace(`{"base64":"${1}", "type": "jpeg"}`, "${1}", base64Data, 1)
+	w.Write([]byte(resStr))
+}
+
+func resizeServe(w http.ResponseWriter, req *http.Request) {
+	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	query := req.URL.Query()
+	author := getQuery(query, "author")
+	name := getQuery(query, "name")
+	width := getQuery(query, "width")
+	height := getQuery(query, "height")
+	if len(author) == 0 || len(name) == 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "author and name can't be null"}`))
+		return
+	}
+	if len(width) == 0 && len(height) == 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "both width and height are null"}`))
+		return
+	}
+
+	img, err := loadCover(author, name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "load image data faial"}`))
+		return
+	}
+
+	scaleWidth, _ := strconv.Atoi(width)
+	scaleHeight, _ := strconv.Atoi(height)
+
+	thumbnail := resize.Resize(uint(scaleWidth), uint(scaleHeight), img, resize.Lanczos3)
+
+	if getQuery(query, "type") == "image" {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(jpegToBytes(thumbnail))
+		return
+	}
+
+	base64Data := jpegToBase64(thumbnail)
+	resStr := strings.Replace(`{"base64":"${1}", "type": "jpeg"}`, "${1}", base64Data, 1)
 	w.Write([]byte(resStr))
 }
 
 func main() {
 	http.HandleFunc("/ping", pingServe)
-	http.HandleFunc("/shadow", shadowCaptchaServe)
+	http.HandleFunc("/@images/shadow", shadowServe)
+	http.HandleFunc("/@images/resize", resizeServe)
 
 	log.Println("server is at :3015")
 	if err := http.ListenAndServe(":3015", nil); err != nil {
