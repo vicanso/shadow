@@ -5,41 +5,25 @@ import (
 	"encoding/base64"
 	"image"
 	"image/jpeg"
+	"image/png"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/buger/jsonparser"
 	"github.com/nfnt/resize"
 )
 
-// 获取图片数据
-func loadImage(path string) (img image.Image, err error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
+// 获取query参数
+func getQuery(query map[string][]string, key string) string {
+	data := query[key]
+	if data == nil {
+		return ""
 	}
-	defer file.Close()
-	return jpeg.Decode(file)
-}
-
-func loadCover(author, name string) (img image.Image, err error) {
-	file := "/covers/" + author + "/" + name + "/cover.jpg"
-	return loadImage(file)
-}
-
-// 图片转换为[]bytes
-func jpegToBytes(img image.Image) []byte {
-	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
-
-	jpeg.Encode(buf, img, nil) //写入buffer
-	return buf.Bytes()
-}
-
-// 图片转换为base64
-func jpegToBase64(img image.Image) string {
-	return base64.StdEncoding.EncodeToString(jpegToBytes(img))
+	return strings.Join(data, "")
 }
 
 // 对图片进行缩小处理
@@ -76,37 +60,106 @@ func scaleImage(img image.Image, width int, height int, times int) image.Image {
 	return rgba
 }
 
-func pingServe(w http.ResponseWriter, req *http.Request) {
-	w.Write([]byte("pong"))
-}
-
-func getQuery(query map[string][]string, key string) string {
-	data := query[key]
-	if data == nil {
-		return ""
+// 读取图像数据，根据请求的url或者base64数据
+func getImage(req *http.Request) (image.Image, string, error) {
+	query := req.URL.Query()
+	url := getQuery(query, "url")
+	if len(url) != 0 {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get(url)
+		if err != nil {
+			return nil, "", err
+		}
+		defer res.Body.Close()
+		buf, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil, "", err
+		}
+		return image.Decode(bytes.NewReader(buf))
 	}
-	return strings.Join(data, "")
+	body, err := ioutil.ReadAll(req.Body)
+	defer req.Body.Close()
+	if err != nil {
+		return nil, "", err
+	}
+	base64Data, err := jsonparser.GetString(body, "base64")
+	if err != nil {
+		return nil, "", err
+	}
+	buf, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return nil, "", err
+	}
+	return image.Decode(bytes.NewReader(buf))
 }
 
-// 根据封面生成
+// 获取参数确认输出（图片或者base64）
+func responseImage(w http.ResponseWriter, req *http.Request, img image.Image, imgType string) {
+	// 图片数据可以缓存，设置客户端缓存 一年
+	w.Header().Set("Cache-Control", "public, max-age=31536000, s-maxage=600")
+	query := req.URL.Query()
+
+	outputType := getQuery(query, "type")
+	if len(outputType) == 0 {
+		outputType = imgType
+	}
+
+	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
+	switch outputType {
+	case "jpeg":
+		jpeg.Encode(buf, img, nil)
+	case "png":
+		png.Encode(buf, img)
+	}
+
+	data := buf.Bytes()
+	if getQuery(query, "output") != "base64" {
+		w.Header().Set("Content-Type", "image/"+outputType)
+		w.Write(data)
+		return
+	}
+
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"base64":"` + base64Data + `", "type": "` + outputType + `"}`))
+}
+
+// 图片压缩处理（保持原有尺寸，调整质量）
+func optimServe(w http.ResponseWriter, req *http.Request) {
+	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	img, imgType, err := getImage(req)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "load image data faial"}`))
+		return
+	}
+
+	origBounds := img.Bounds()
+	// 对图片做压缩处理（原尺寸不变化 ）
+	thumbnail := resize.Resize(uint(origBounds.Dx()), 0, img, resize.Lanczos3)
+	responseImage(w, req, thumbnail, imgType)
+}
+
+// 生成阴影缩略图
 func shadowServe(w http.ResponseWriter, req *http.Request) {
 	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	query := req.URL.Query()
-	author := getQuery(query, "author")
-	name := getQuery(query, "name")
 	width := getQuery(query, "width")
 	height := getQuery(query, "height")
 	// 模糊倍数
 	times := getQuery(query, "times")
-	if len(author) == 0 || len(name) == 0 || len(width) == 0 || len(height) == 0 {
+	if len(width) == 0 || len(height) == 0 {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"message": "author, name, width and height can't be null"}`))
+		w.Write([]byte(`{"message": "width and height can't be null"}`))
 		return
 	}
-
-	img, err := loadCover(author, name)
+	img, imgType, err := getImage(req)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"message": "load image data faial"}`))
@@ -134,67 +187,45 @@ func shadowServe(w http.ResponseWriter, req *http.Request) {
 			scaleTimes = v
 		}
 	}
-
 	thumbnail := scaleImage(img, scaleWidth, scaleHeight, scaleTimes)
-
-	if getQuery(query, "type") == "image" {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Write(jpegToBytes(thumbnail))
-		return
-	}
-
-	base64Data := jpegToBase64(thumbnail)
-	resStr := strings.Replace(`{"base64":"${1}", "type": "jpeg"}`, "${1}", base64Data, 1)
-	w.Write([]byte(resStr))
+	responseImage(w, req, thumbnail, imgType)
 }
 
+// 调整图像尺寸
 func resizeServe(w http.ResponseWriter, req *http.Request) {
 	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	query := req.URL.Query()
-	author := getQuery(query, "author")
-	name := getQuery(query, "name")
 	width := getQuery(query, "width")
 	height := getQuery(query, "height")
-	if len(author) == 0 || len(name) == 0 {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"message": "author and name can't be null"}`))
-		return
-	}
 	if len(width) == 0 && len(height) == 0 {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"message": "both width and height are null"}`))
 		return
 	}
-
-	img, err := loadCover(author, name)
+	img, imgType, err := getImage(req)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"message": "load image data faial"}`))
 		return
 	}
-
 	scaleWidth, _ := strconv.Atoi(width)
 	scaleHeight, _ := strconv.Atoi(height)
 
 	thumbnail := resize.Resize(uint(scaleWidth), uint(scaleHeight), img, resize.Lanczos3)
+	responseImage(w, req, thumbnail, imgType)
+}
 
-	if getQuery(query, "type") == "image" {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Write(jpegToBytes(thumbnail))
-		return
-	}
-
-	base64Data := jpegToBase64(thumbnail)
-	resStr := strings.Replace(`{"base64":"${1}", "type": "jpeg"}`, "${1}", base64Data, 1)
-	w.Write([]byte(resStr))
+func pingServe(w http.ResponseWriter, req *http.Request) {
+	w.Write([]byte("pong"))
 }
 
 func main() {
 	http.HandleFunc("/ping", pingServe)
 	http.HandleFunc("/@images/shadow", shadowServe)
 	http.HandleFunc("/@images/resize", resizeServe)
+	http.HandleFunc("/@images/optim", optimServe)
 
 	log.Println("server is at :3015")
 	if err := http.ListenAndServe(":3015", nil); err != nil {

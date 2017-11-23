@@ -1,6 +1,12 @@
 # shadow
 
-用于生成图片的模糊阴影
+用于图片的缩放、压缩等处理
+
+
+curl 'http://127.0.0.1:3015/@images/optim?url=xxx&type=jpeg'
+
+curl 'http://127.0.0.1:3015/@images/resize?url=xxx&type=jpeg&width=300&height=100'
+
 
 ## docker
 
