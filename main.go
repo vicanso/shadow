@@ -9,12 +9,14 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/buger/jsonparser"
 	"github.com/nfnt/resize"
+	"github.com/fogleman/primitive/primitive"
 )
 
 // 获取query参数
@@ -217,6 +219,44 @@ func resizeServe(w http.ResponseWriter, req *http.Request) {
 	responseImage(w, req, thumbnail, imgType)
 }
 
+func primitiveServe(w http.ResponseWriter, req *http.Request) {
+	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	img, imgType, err := getImage(req)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "load image data faial"}`))
+		return
+	}
+	query := req.URL.Query()
+	width, _ := strconv.Atoi(getQuery(query, "width"))
+	height, _ := strconv.Atoi(getQuery(query, "height"))
+	times, _ := strconv.Atoi(getQuery(query, "times"))
+
+	if width != 0 || height != 0 {
+		img = resize.Resize(uint(width), uint(height), img, resize.Bilinear)
+	}
+	
+	if times == 0 {
+		times = 128 
+	}
+
+	origBounds := img.Bounds()
+
+	bg := primitive.MakeColor(primitive.AverageImageColor(img))
+
+	model := primitive.NewModel(img, bg, origBounds.Dy(), runtime.NumCPU())
+	for i := 0; i < times; i++ {
+
+		// find optimal shape and add it to the model
+		model.Step(primitive.ShapeType(1), 128, 0)
+	}
+	thumbnail := model.Context.Image()
+	responseImage(w, req, thumbnail, imgType)
+
+}
+
 func pingServe(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("pong"))
 }
@@ -226,6 +266,7 @@ func main() {
 	http.HandleFunc("/@images/shadow", shadowServe)
 	http.HandleFunc("/@images/resize", resizeServe)
 	http.HandleFunc("/@images/optim", optimServe)
+	http.HandleFunc("/@images/primitive", primitiveServe)
 
 	log.Println("server is at :3015")
 	if err := http.ListenAndServe(":3015", nil); err != nil {
