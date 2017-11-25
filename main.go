@@ -110,7 +110,7 @@ func responseImage(w http.ResponseWriter, req *http.Request, img image.Image, im
 
 	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
 	switch outputType {
-	case "jpeg":
+	default:
 		jpeg.Encode(buf, img, nil)
 	case "png":
 		png.Encode(buf, img)
