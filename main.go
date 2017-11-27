@@ -15,8 +15,9 @@ import (
 	"time"
 
 	"github.com/buger/jsonparser"
-	"github.com/nfnt/resize"
+	"github.com/chai2010/webp"
 	"github.com/fogleman/primitive/primitive"
+	"github.com/nfnt/resize"
 )
 
 // 获取query参数
@@ -107,13 +108,29 @@ func responseImage(w http.ResponseWriter, req *http.Request, img image.Image, im
 	if len(outputType) == 0 {
 		outputType = imgType
 	}
+	
+	quality, _ := strconv.Atoi(getQuery(query, "quality"))
 
 	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
+	var err error
 	switch outputType {
 	default:
-		jpeg.Encode(buf, img, nil)
+		err = jpeg.Encode(buf, img, &jpeg.Options{Quality: quality})
 	case "png":
-		png.Encode(buf, img)
+		err = png.Encode(buf, img)
+	case "webp":
+		// 默认转换质量
+		if (quality == 0) {
+			err = webp.Encode(buf, img, &webp.Options{Lossless: true})
+		} else {
+			err = webp.Encode(buf, img, &webp.Options{Lossless: false, Quality: 75})
+		}
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "encode image data faial"}`))
+		return
 	}
 
 	data := buf.Bytes()
@@ -237,9 +254,9 @@ func primitiveServe(w http.ResponseWriter, req *http.Request) {
 	if width != 0 || height != 0 {
 		img = resize.Resize(uint(width), uint(height), img, resize.Bilinear)
 	}
-	
+
 	if times == 0 {
-		times = 128 
+		times = 128
 	}
 
 	origBounds := img.Bounds()

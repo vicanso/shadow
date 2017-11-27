@@ -1,9 +1,9 @@
-FROM alpine
+FROM ubuntu 
 
 EXPOSE 3015 
 
-RUN apk --no-cache add ca-certificates \
-  && update-ca-certificates
+RUN apt-get update \
+  && apt-get install -y ca-certificates
 
 ADD ./shadow /
 
