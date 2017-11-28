@@ -5,6 +5,7 @@
 公共参数列表：
 
 - `query.url` 源图片地址，在请求的querstring中指定源图片的地址
+- `query.file` 源图片路径，在请求的querysting中指定源图片的路径
 - `body.base64` 源图片数据，在POST中指定源数据的base64，优先以`query.url`的形式获取数据 
 - `query.type` 转换后的图像格式，如果不指定，则与源图片一致，支持`png` `jpeg` `webp`
 - `query.output` 转换后返回的数据格式，如果不指定，则以字节形式返回，可指定为`base64`

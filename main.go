@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -66,6 +67,17 @@ func scaleImage(img image.Image, width int, height int, times int) image.Image {
 // 读取图像数据，根据请求的url或者base64数据
 func getImage(req *http.Request) (image.Image, string, error) {
 	query := req.URL.Query()
+
+	file := getQuery(query, "file")
+	if len(file) != 0 {
+		f, err := os.Open(file)
+		if err != nil {
+			return nil, "", err
+		}
+		defer f.Close()
+		return image.Decode(f)
+	}
+
 	url := getQuery(query, "url")
 	if len(url) != 0 {
 		c := &http.Client{
@@ -108,7 +120,7 @@ func responseImage(w http.ResponseWriter, req *http.Request, img image.Image, im
 	if len(outputType) == 0 {
 		outputType = imgType
 	}
-	
+
 	quality, _ := strconv.Atoi(getQuery(query, "quality"))
 
 	buf := bytes.NewBuffer(nil) //开辟一个新的空buff
@@ -120,10 +132,10 @@ func responseImage(w http.ResponseWriter, req *http.Request, img image.Image, im
 		err = png.Encode(buf, img)
 	case "webp":
 		// 默认转换质量
-		if (quality == 0) {
+		if quality == 0 {
 			err = webp.Encode(buf, img, &webp.Options{Lossless: true})
 		} else {
-			err = webp.Encode(buf, img, &webp.Options{Lossless: false, Quality: 75})
+			err = webp.Encode(buf, img, &webp.Options{Lossless: false, Quality: float32(quality)})
 		}
 	}
 
