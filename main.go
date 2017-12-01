@@ -162,6 +162,7 @@ func optimServe(w http.ResponseWriter, req *http.Request) {
 	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
+	query := req.URL.Query()
 	img, imgType, err := getImage(req)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -169,9 +170,16 @@ func optimServe(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	origBounds := img.Bounds()
+	width, _ := strconv.Atoi(getQuery(query, "width"))
+	height, _ := strconv.Atoi(getQuery(query, "height"))
+
+	if width == 0 && height == 0 {
+		origBounds := img.Bounds()
+		width = origBounds.Dx()
+	}
+
 	// 对图片做压缩处理（原尺寸不变化 ）
-	thumbnail := resize.Resize(uint(origBounds.Dx()), 0, img, resize.Lanczos3)
+	thumbnail := resize.Resize(uint(width), uint(height), img, resize.Lanczos3)
 	responseImage(w, req, thumbnail, imgType)
 }
 
@@ -222,31 +230,6 @@ func shadowServe(w http.ResponseWriter, req *http.Request) {
 	responseImage(w, req, thumbnail, imgType)
 }
 
-// 调整图像尺寸
-func resizeServe(w http.ResponseWriter, req *http.Request) {
-	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache")
-	query := req.URL.Query()
-	width := getQuery(query, "width")
-	height := getQuery(query, "height")
-	if len(width) == 0 && len(height) == 0 {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"message": "both width and height are null"}`))
-		return
-	}
-	img, imgType, err := getImage(req)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"message": "load image data faial"}`))
-		return
-	}
-	scaleWidth, _ := strconv.Atoi(width)
-	scaleHeight, _ := strconv.Atoi(height)
-
-	thumbnail := resize.Resize(uint(scaleWidth), uint(scaleHeight), img, resize.Lanczos3)
-	responseImage(w, req, thumbnail, imgType)
-}
 
 func primitiveServe(w http.ResponseWriter, req *http.Request) {
 	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL)
@@ -293,7 +276,6 @@ func pingServe(w http.ResponseWriter, req *http.Request) {
 func main() {
 	http.HandleFunc("/ping", pingServe)
 	http.HandleFunc("/@images/shadow", shadowServe)
-	http.HandleFunc("/@images/resize", resizeServe)
 	http.HandleFunc("/@images/optim", optimServe)
 	http.HandleFunc("/@images/primitive", primitiveServe)
 
