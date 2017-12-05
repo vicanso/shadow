@@ -41,7 +41,7 @@ curl 'http://127.0.0.1:3015/@images/resize?url=xxx&type=jpeg&width=300&height=10
 ### docker build
 
 ```bash
-docker run -it --rm -v ~/go:/go -v ~/github:/github golang bash
+docker run -it --rm -v ~/project/shadow:/shadow golang bash
 ```
 
 ```bash
